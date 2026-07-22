@@ -209,7 +209,11 @@ with tab_pred:
         optimal_bet = best_pick if best_ev > 0.0 else "NO VALUE LINES FOUND (PASS)"
         
         sample_density = min(h_stats["games_played"], a_stats["games_played"])
-        confidence_score = min(100, int((sample_density / 6.0) * 100)) if sample_density > 0 else 15
+        confidence_score = min(100, int((sample_density / 12.0) * 100)) if sample_density > 0 else 15
+
+        # Automated Low Confidence Safety Banner Trigger
+        if confidence_score < 50:
+            st.warning(f"⚠️ **CRITICAL RISK ALERT: LOW DATA CONFIDENCE ({confidence_score}%)** — The system has evaluated only {sample_density} match profiles for these clubs within your rolling window. Form variables are heavily regressed. Do not run max-stake portfolios.")
 
         # Compute De-duplicated Portfolio Accuracy Metrics
         completed_games = raw_master_df.dropna(subset=["home_goals", "away_goals"])
@@ -220,9 +224,11 @@ with tab_pred:
         else:
             global_accuracy_score, league_accuracy_score = 100.0, 100.0
 
-        # Dynamic System Grading
-        if best_ev <= 0.0: bet_rating, stake_pct = "PASS - NO ADVANTAGE", 0.0
-        elif confidence_score < 40: bet_rating, stake_pct = "EXPERIMENTAL (LOW SAMPLE)", 0.5
+        # Dynamic System Grading & Strict Bankroll Preservation
+        if best_ev <= 0.0: 
+            bet_rating, stake_pct = "PASS - NO ADVANTAGE", 0.0
+        elif confidence_score < 50: 
+            bet_rating, stake_pct = "EXPERIMENTAL (LOW SAMPLE)", 0.5
         else:
             if best_ev <= 0.03: bet_rating, stake_pct = "MICRO GRINDER EDGE", 1.0
             elif best_ev <= 0.07: bet_rating, stake_pct = "MODERATE SYSTEM ADVANTAGE", 2.0
@@ -235,6 +241,14 @@ with tab_pred:
             with m_acc1: st.metric("Overall App Accuracy", f"{global_accuracy_score:.1f}%")
             with m_acc2: st.metric(f"{selected_league_filter} Hit Rate", f"{league_accuracy_score:.1f}%")
             with m_conf: st.metric("Match Confidence", f"{confidence_score}%")
+            
+            # --- DYNAMIC VALUE BET BADGE DISPLAY LAYOUT ---
+            st.markdown("### 🏷️ System Target Evaluation")
+            if best_ev > 0.0:
+                st.error(f"🚨 VALUE BET DETECTED: {best_pick} (+{best_ev*100:.1f}% EV)")
+            else:
+                st.info("⚪ NO LINE VALUE DETECTED FOR THIS PROFILE")
+            st.markdown("---")
             
             st.write(f"🏠 **Home Win EV**: `{ev_1*100:+.1f}%` | Edge: `{conf_1*100:+.1f}%`")
             st.write(f"🤝 **Draw Outcome EV**: `{ev_X*100:+.1f}%` | Edge: `{conf_X*100:+.1f}%`")
@@ -272,3 +286,4 @@ with tab_pred:
         grid_matrix = res.get("raw_matrix", np.zeros((max_score_cap + 1, max_score_cap + 1)))
         grid_df = pd.DataFrame(grid_matrix, index=[f"Home {i}" for i in range(grid_matrix.shape[0])], columns=[f"Away {j}" for j in range(grid_matrix.shape[1])])
         st.dataframe(grid_df.style.format("{:.4f}").background_gradient(cmap="Blues"), use_container_width=True)
+        
