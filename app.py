@@ -202,19 +202,31 @@ with tab_pred:
         conf_2 = prob_away - (1.0 / odds_2)
         conf_over = over_25_p - (1.0 / odds_over)
 
-        # Optimization Picker
-        bets_pool = [("HOME WIN (1)", ev_1, conf_1), ("DRAW (X)", ev_X, conf_X), ("AWAY WIN (2)", ev_2, conf_2), ("OVER 2.5 GOALS", ev_over, conf_over)]
-        bets_pool.sort(key=lambda item: item[1], reverse=True)
-        best_pick, best_ev, best_conf = bets_pool[0]
-        optimal_bet = best_pick if best_ev > 0.0 else "NO VALUE LINES FOUND (PASS)"
+        # Raw pool generation mapping
+        raw_pool = [
+            ("HOME WIN (1)", ev_1, prob_home, conf_1),
+            ("DRAW (X)", ev_X, prob_draw, conf_X),
+            ("AWAY WIN (2)", ev_2, prob_away, conf_2),
+            ("OVER 2.5 GOALS", ev_over, over_25_p, conf_over)
+        ]
         
+        # Dual-Gate Filter: Selection must have positive EV AND cross a strict 35% probability threshold
+        qualified_bets = [item for item in raw_pool if item[1] > 0.0 and item[2] >= 0.35]
+        
+        if qualified_bets:
+            qualified_bets.sort(key=lambda x: x[1], reverse=True)
+            best_pick, best_ev, best_prob, best_conf = qualified_bets[0]
+            optimal_bet = best_pick
+        else:
+            optimal_bet = "NO SELECTION QUALIFIED (PROBABILITY OR EV FLOORS FAILED)"
+            best_ev, best_conf, best_prob = 0.0, 0.0, 0.0
+
         sample_density = min(h_stats["games_played"], a_stats["games_played"])
         confidence_score = min(100, int((sample_density / 12.0) * 100)) if sample_density > 0 else 15
 
-        # Automated Low Confidence Safety Banner Trigger
+        # Automated Safety Banner Trigger
         if confidence_score < 50:
-            st.warning(f"⚠️ **CRITICAL RISK ALERT: LOW DATA CONFIDENCE ({confidence_score}%)** — The system has evaluated only {sample_density} match profiles for these clubs within your rolling window. Form variables are heavily regressed. Do not run max-stake portfolios.")
-
+            st.warning(f"⚠️ **CRITICAL RISK ALERT: LOW DATA CONFIDENCE ({confidence_score}%)** — The system has evaluated only {sample_density} match profiles for these clubs within your rolling window. Form variables are heavily regressed.")
         # Compute De-duplicated Portfolio Accuracy Metrics
         completed_games = raw_master_df.dropna(subset=["home_goals", "away_goals"])
         if not completed_games.empty:
@@ -224,15 +236,21 @@ with tab_pred:
         else:
             global_accuracy_score, league_accuracy_score = 100.0, 100.0
 
-        # Dynamic System Grading & Strict Bankroll Preservation
-        if best_ev <= 0.0: 
-            bet_rating, stake_pct = "PASS - NO ADVANTAGE", 0.0
-        elif confidence_score < 50: 
-            bet_rating, stake_pct = "EXPERIMENTAL (LOW SAMPLE)", 0.5
+        # --- RE-ENGINEERED CONDITIONAL STAKING STRENGTH RECOMMENDATION SYSTEM ---
+        if optimal_bet == "NO SELECTION QUALIFIED (PROBABILITY OR EV FLOORS FAILED)":
+            bet_recommendation = "❌ NO BET"
+            bet_rating, stake_pct = "PASS - HOLD CAPITAL (EV/PROBABILITY FLOORS FAILED)", 0.0
+        elif confidence_score < 50:
+            bet_recommendation = "❌ NO BET"
+            bet_rating, stake_pct = "EXPERIMENTAL SAMPLE BASE (CONFIDENCE BELOW 50% FLOORS)", 0.0
         else:
-            if best_ev <= 0.03: bet_rating, stake_pct = "MICRO GRINDER EDGE", 1.0
-            elif best_ev <= 0.07: bet_rating, stake_pct = "MODERATE SYSTEM ADVANTAGE", 2.0
-            else: bet_rating, stake_pct = "HIGH CONVICTION GOLDEN SELECTION", 3.5
+            # High vs Low staking assignment gradient
+            if best_ev >= 0.071:
+                bet_recommendation = "🔥 HIGH BET"
+                bet_rating, stake_pct = "HIGH CONVICTION SYSTEM UNDERPRICING", 3.5
+            else:
+                bet_recommendation = "📈 LOW BET"
+                bet_rating, stake_pct = "MICRO GRINDER SYSTEM EDGE", 1.0
 
         c_left, c_right = st.columns(2)
         with c_left:
@@ -242,18 +260,20 @@ with tab_pred:
             with m_acc2: st.metric(f"{selected_league_filter} Hit Rate", f"{league_accuracy_score:.1f}%")
             with m_conf: st.metric("Match Confidence", f"{confidence_score}%")
             
-            # --- DYNAMIC VALUE BET BADGE DISPLAY LAYOUT ---
             st.markdown("### 🏷️ System Target Evaluation")
-            if best_ev > 0.0:
-                st.error(f"🚨 VALUE BET DETECTED: {best_pick} (+{best_ev*100:.1f}% EV)")
+            if qualified_bets and confidence_score >= 50:
+                if "HIGH" in bet_recommendation:
+                    st.error(f"🚨 CRITICAL VALUE EDGE: {bet_recommendation} on {best_pick} (+{best_ev*100:.1f}% EV)")
+                else:
+                    st.warning(f"📈 STANDARD STABLE EDGE: {bet_recommendation} on {best_pick} (+{best_ev*100:.1f}% EV)")
             else:
-                st.info("⚪ NO LINE VALUE DETECTED FOR THIS PROFILE")
+                st.info(f"❌ SYSTEM DISMISSAL ACTION: {bet_recommendation} (CAPITAL RISK SHIELD ACTIVE)")
             st.markdown("---")
             
-            st.write(f"🏠 **Home Win EV**: `{ev_1*100:+.1f}%` | Edge: `{conf_1*100:+.1f}%`")
-            st.write(f"🤝 **Draw Outcome EV**: `{ev_X*100:+.1f}%` | Edge: `{conf_X*100:+.1f}%`")
-            st.write(f"🚀 **Away Win EV**: `{ev_2*100:+.1f}%` | Edge: `{conf_2*100:+.1f}%`")
-            st.write(f"⚽ **Over 2.5 Goals EV**: `{ev_over*100:+.1f}%` | Edge: `{conf_over*100:+.1f}%`")
+            st.write(f"🏠 **Home Win EV**: `{ev_1*100:+.1f}%` (Prob: `{prob_home*100:.1f}%`)")
+            st.write(f"🤝 **Draw Outcome EV**: `{ev_X*100:+.1f}%` (Prob: `{prob_draw*100:.1f}%`)")
+            st.write(f"🚀 **Away Win EV**: `{ev_2*100:+.1f}%` (Prob: `{prob_away*100:.1f}%`)")
+            st.write(f"⚽ **Over 2.5 Goals EV**: `{ev_over*100:+.1f}%` (Prob: `{over_25_p*100:.1f}%`)")
             st.markdown("---")
             st.write(f"🛡️ **Double Chance 1X**: `{dc_1X_p*100:.1f}%` | **X2**: `{dc_X2_p*100:.1f}%` | **12**: `{dc_12_p*100:.1f}%`")
             st.write(f"⚽ **BTTS (Yes)**: `{btts_yes_p*100:.1f}%` | **BTTS (No)**: `{btts_no_p*100:.1f}%`")
@@ -272,18 +292,18 @@ with tab_pred:
                 f"* X (Draw Match): {prob_draw*100:.1f}% | Fair: {1/max(0.01, prob_draw):.2f}\n"
                 f"* 2 (Away Win): {prob_away*100:.1f}% | Fair: {1/max(0.01, prob_away):.2f}\n"
                 f"----------------------------------------\n"
-                f"RECOMMENDED OPTIMAL PICK: {optimal_bet}\n"
-                f"TARGET EXPECTED VALUE   : {best_ev*100:+.1f}%\n"
-                f"MODEL DATA CONFIDENCE   : {confidence_score}%\n"
+                f"RECOMMENDED SYSTEM BET ACTION : {bet_recommendation}\n"
+                f"RECOMMENDED OPTIMAL POSITION  : {optimal_bet}\n"
+                f"TARGET EXPECTED VALUE (EV)    : {best_ev*100:+.1f}%\n"
+                f"MODEL DATA CONFIDENCE METRIC  : {confidence_score}%\n"
                 f"----------------------------------------\n"
-                f"SYSTEM METRIC GRADING   : {bet_rating}\n"
-                f"SUGGESTED BANKROLL ALLOC: {stake_pct:.1f}% OF FUNDS\n"
+                f"PORTFOLIO GRADING SPECIFICATION: {bet_rating}\n"
+                f"SUGGESTED ALLOCATION ALLOTMENT: {stake_pct:.1f}% OF FUNDS\n"
                 f"========================================"
             )
-            st.text_area("System Coupon Script Output", value=ticket_txt, height=380)
+            st.text_area("System Coupon Script Output", value=ticket_txt, height=400)
             
         st.markdown("### 🧮 Dixon-Coles Probability Matrix Distribution Grid")
         grid_matrix = res.get("raw_matrix", np.zeros((max_score_cap + 1, max_score_cap + 1)))
         grid_df = pd.DataFrame(grid_matrix, index=[f"Home {i}" for i in range(grid_matrix.shape[0])], columns=[f"Away {j}" for j in range(grid_matrix.shape[1])])
         st.dataframe(grid_df.style.format("{:.4f}").background_gradient(cmap="Blues"), use_container_width=True)
-        
